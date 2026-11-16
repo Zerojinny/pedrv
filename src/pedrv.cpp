@@ -34,7 +34,7 @@
 using std::wstring;
 using std::vector;
 
-#define PEDRV_VERSION L"1.1"
+#define PEDRV_VERSION L"1.2"
 #define PEDRV_BANNER  L"pedrv " PEDRV_VERSION L" (built " _CRT_WIDE(__DATE__) L")"
 
 // Set by the first Ctrl+C: the current step finishes, then pedrv cleans up and exits.
@@ -696,12 +696,30 @@ static bool ParseInf(const wstring& path, const Platform& plat, Inf& inf)
 // of the emptied files ("tampered, but error is ignored in WinPE"). Never used
 // for an offline Windows, which needs the complete, verifiable package.
 
+//
+// The package is the INF's folder without the subfolders that hold an INF of their own
+// (child packages, e.g. Intel's DisplayAudio), unless the selected INFs refer to them.
+// Of the INFs in the package only the selected ones and those they CopyINF are kept.
+
 struct SlimRules {
     std::set<wstring> wsl;      // upper-case names of files the INF copies to a WSL (lxss) folder
+    std::set<wstring> infs;     // upper-case relative paths of the INFs to keep (selected + CopyINF)
+    std::set<wstring> usedDirs; // upper-case relative folders the selected INFs refer to
     bool nvidia = false;        // NVIDIA display package: drop the compute/AI/capture components
     bool amd = false;           // AMD display package: drop FidelityFX, AMF runtime, bundled installers
+    bool max = false;           // /slim:max: also drop the OpenGL and Vulkan drivers
     bool keep32 = true;         // target can run 32-bit code (x86, or WinPE with WoW64)
 };
+
+// "./sub\x.inf" -> "SUB\X.INF"
+static wstring NormRel(wstring p)
+{
+    std::replace(p.begin(), p.end(), L'/', L'\\');
+    while (!p.compare(0, 2, L".\\")) p.erase(0, 2);
+    while (!p.empty() && p[0] == L'\\') p.erase(0, 1);
+    while (!p.empty() && p.back() == L'\\') p.pop_back();
+    return p == L"." ? wstring() : Upper(p);
+}
 
 struct SlimStats {
     ULONGLONG before = 0, after = 0;
@@ -715,6 +733,7 @@ static void AddSlimRules(const Inf& inf, SlimRules& r)
         if (prov.find(L"NVIDIA") != wstring::npos) r.nvidia = true;
         if (prov.find(L"ADVANCED MICRO DEVICES") != wstring::npos || !prov.compare(0, 3, L"AMD")) r.amd = true;
     }
+    r.infs.insert(Upper(NameOf(inf.path)));
     HINF h = OpenInf(inf.path);
     if (h == INVALID_HANDLE_VALUE) return;
     INFCONTEXT ctx;
@@ -731,7 +750,53 @@ static void AddSlimRules(const Inf& inf, SlimRules& r)
             } while (SetupFindNextLine(&file, &file));
         } while (SetupFindNextLine(&ctx, &ctx));
     }
+
+    // INFs and folders this INF needs: CopyINF targets, and the paths of its source disks
+    // (SourceDisksNames: id = desc,tag,unused,path) and files (SourceDisksFiles: name = id,subdir).
+    std::map<wstring, wstring> disks;
+    vector<std::pair<wstring, wstring>> files;      // disk id, subdir
+    wchar_t sec[512];
+    for (UINT i = 0; SetupEnumInfSectionsW(h, i, sec, ARRAYSIZE(sec), nullptr); i++) {
+        wstring s = Upper(sec);
+        bool names = !s.compare(0, 16, L"SOURCEDISKSNAMES"), srcFiles = !s.compare(0, 16, L"SOURCEDISKSFILES");
+        if (SetupFindFirstLineW(h, sec, nullptr, &ctx)) {
+            do {
+                if (names) disks[InfField(&ctx, 0)] = NormRel(InfField(&ctx, 4));
+                else if (srcFiles) files.push_back({ InfField(&ctx, 1), NormRel(InfField(&ctx, 2)) });
+                else if (!_wcsicmp(InfField(&ctx, 0).c_str(), L"CopyINF")) {
+                    for (DWORD f = 1, n = SetupGetFieldCount(&ctx); f <= n; f++) {
+                        wstring p = NormRel(InfField(&ctx, f));
+                        if (p.empty()) continue;
+                        r.infs.insert(p);
+                        if (p.find(L'\\') != wstring::npos) r.usedDirs.insert(DirOf(p));
+                    }
+                }
+            } while (SetupFindNextLine(&ctx, &ctx));
+        }
+    }
+    for (auto& d : disks) if (!d.second.empty()) r.usedDirs.insert(d.second);
+    for (auto& f : files) {
+        wstring disk = disks.count(f.first) ? disks[f.first] : wstring();
+        wstring p = disk.empty() ? f.second : f.second.empty() ? disk : disk + L"\\" + f.second;
+        if (!p.empty()) r.usedDirs.insert(p);
+    }
     SetupCloseInfFile(h);
+}
+
+// A subfolder of the package (relative, upper case) that holds an INF of its own is another
+// package, unless the selected INFs use it or something below it.
+static bool SkipSubdir(const wstring& dir, const wstring& rel, const SlimRules& r)
+{
+    for (const wstring& u : r.usedDirs)
+        if (u == rel || !u.compare(0, rel.size() + 1, rel + L"\\")) return false;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW(LongPath(Join(dir, L"*.inf")).c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    bool found = false;
+    do found = !(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && ExtOf(fd.cFileName) == L".INF";
+    while (!found && FindNextFileW(h, &fd));
+    FindClose(h);
+    return found;
 }
 
 static bool IsX86Image(const wstring& path) { return PeMachine(path) == IMAGE_FILE_MACHINE_I386; }
@@ -740,7 +805,8 @@ static bool IsX86Image(const wstring& path) { return PeMachine(path) == IMAGE_FI
 static bool SlimDrops(const wstring& path, const wstring& rel, const SlimRules& r)
 {
     wstring name = Upper(NameOf(path)), ext = ExtOf(path);
-    if (ext == L".INF" || ext == L".CAT" || ext == L".SYS") return false;
+    if (ext == L".INF") return !r.infs.empty() && !r.infs.count(Upper(rel));   // INFs for other devices
+    if (ext == L".CAT" || ext == L".SYS") return false;
     if (r.wsl.count(name)) return true;
     if (ext == L".SO" || name.find(L".SO.") != wstring::npos) return true;         // Linux libraries for WSL
     if (r.nvidia) {
@@ -751,10 +817,12 @@ static bool SlimDrops(const wstring& path, const wstring& rel, const SlimRules& 
         static const wchar_t* const drop[] = {
             L"NVCUDA", L"NVCUBINS", L"NVOPTIX", L"NVRTUM", L"NVVM", L"NVPTXJIT", L"NVOPENCL", L"OPENCL",
             L"NVCUVID", L"NVENCODEAPI", L"NVDXDLKERNELS", L"NVTILEIRAS", L"NVDLPPX", L"NVDIRECTSR", L"NVNGX",
-            L"NVAIVPX", L"NVOBJECTLOADER", L"NVTELEMETRY", L"NVGAMES", L"NVIDIA-PCC",
+            L"_NVNGX", L"NVAIVPX", L"NVOBJECTLOADER", L"NVTELEMETRY", L"NVGAMES", L"NVIDIA-PCC",
+            L"NVVKSC",                                                              // Vulkan SC (safety-critical)
         };
         for (const wchar_t* p : drop)
             if (!name.compare(0, wcslen(p), p)) return true;
+        if (r.max && (!name.compare(0, 6, L"NVOGLV") || !name.compare(0, 10, L"VULKANINFO"))) return true;   // OpenGL + Vulkan
     }
     if (r.amd) {
         // FidelityFX library (loaded by the DX12/Vulkan drivers on demand), the alternative
@@ -764,6 +832,12 @@ static bool SlimDrops(const wstring& path, const wstring& rel, const SlimRules& 
         static const wchar_t* const drop[] = { L"AMDXCFFX", L"AMDVLK_NEXUS", L"AMFRTDRV", L"AMDINSTALLMANAGER" };
         for (const wchar_t* p : drop)
             if (!name.compare(0, wcslen(p), p)) return true;
+        // /slim:max: Vulkan (amdvlk) and OpenGL (atio6axx, atioglxx, atig6pxx, atiglpxx) drivers.
+        // The Vulkan loader stays, so a program finds no usable Vulkan driver instead of no loader.
+        static const wchar_t* const dropMax[] = { L"AMDVLK", L"ATIO6AXX", L"ATIOGLXX", L"ATIG6PXX", L"ATIGLPXX", L"VULKANINFO" };
+        if (r.max)
+            for (const wchar_t* p : dropMax)
+                if (!name.compare(0, wcslen(p), p)) return true;
     }
     return !r.keep32 && IsX86Image(path);
 }
@@ -782,6 +856,7 @@ static bool SlimCopy(const wstring& src, const wstring& dst, const wstring& rel,
         wstring from = Join(src, fd.cFileName), to = dst.empty() ? wstring() : Join(dst, fd.cFileName);
         if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
             if (fd.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) continue;
+            if (SkipSubdir(from, Upper(rel + fd.cFileName), r)) continue;
             ok = SlimCopy(from, to, rel + fd.cFileName + L"\\", r, link, st);
             continue;
         }
@@ -1310,8 +1385,11 @@ static void Usage()
         L"  /hwonly            match hardware IDs only, ignore compatible IDs\n"
         L"  /exclude:<classes> skip these device classes, e.g. /exclude:Display,Media\n"
         L"  /slim              WinPE: always load slim copies of the driver packages (WSL, 32-bit,\n"
-        L"                     and for NVIDIA/AMD the compute/upscaler/codec files left empty). Without it\n"
-        L"                     this is done only for a package that does not fit the RAM disk\n"
+        L"                     INFs for other devices, and for NVIDIA/AMD the compute/upscaler/codec\n"
+        L"                     files left empty). Without it this is done only for a package that\n"
+        L"                     does not fit the RAM disk\n"
+        L"  /slim:max          like /slim, and also leave the OpenGL and Vulkan drivers of NVIDIA/AMD\n"
+        L"                     empty (also applies to /export)\n"
         L"  /export:<dir>      install nothing; write slim copies of the selected packages to <dir>\n"
         L"                     (load them later with drvload or /pe). /keep32 keeps the 32-bit files\n"
         L"  /forceunsigned     allow unsigned drivers (DISM /ForceUnsigned)\n"
@@ -1432,7 +1510,7 @@ static bool OptValue(const wstring& arg, const wchar_t* name, wstring& value)
 int wmain(int argc, wchar_t** argv)
 {
     bool list = false, all = false, best = true, hwOnly = false, forceUnsigned = false, pe = false;
-    bool forceSlim = false, keep32 = false;
+    bool forceSlim = false, slimMax = false, keep32 = false;
     wstring image, scratch, sevenZip, logFile, exclude, fromWinPath, exportDir;
     bool fromWin = false, inbox = false;
     vector<wstring> specs;
@@ -1454,6 +1532,7 @@ int wmain(int argc, wchar_t** argv)
             else if (!_wcsicmp(o, L"hwonly")) hwOnly = true;
             else if (!_wcsicmp(o, L"forceunsigned")) forceUnsigned = true;
             else if (!_wcsicmp(o, L"slim")) forceSlim = true;
+            else if (!_wcsicmp(o, L"slim:max")) forceSlim = slimMax = true;
             else if (!_wcsicmp(o, L"keep32")) keep32 = true;
             else if (OptValue(a, L"export", exportDir)) {}
             else if (OptValue(a, L"image", image) || OptValue(a, L"scratch", scratch)
@@ -1511,12 +1590,12 @@ int wmain(int argc, wchar_t** argv)
     if (exporting) {
         if (forceUnsigned) noEffect(L"/forceunsigned", L"with /export");
         if (!logFile.empty()) noEffect(L"/log", L"with /export");
-        if (forceSlim) noEffect(L"/slim", L"with /export (exported copies are always slim)");
+        if (forceSlim && !slimMax) noEffect(L"/slim", L"with /export (exported copies are always slim)");
     } else if (pe) {
         if (forceUnsigned) noEffect(L"/forceunsigned", L"when loading into WinPE");
         if (!logFile.empty()) noEffect(L"/log", L"when loading into WinPE");
     } else {
-        if (forceSlim) noEffect(L"/slim", L"without /pe or /fromwin");
+        if (forceSlim) noEffect(slimMax ? L"/slim:max" : L"/slim", L"without /pe, /fromwin or /export");
         if (keep32) noEffect(L"/keep32", L"without /pe, /fromwin or /export");
     }
     if (all) {
@@ -1724,6 +1803,7 @@ int wmain(int argc, wchar_t** argv)
     auto slimRules = [&](const wstring& dir, const vector<Inf*>& todo) {
         SlimRules r;
         r.keep32 = keep32;
+        r.max = slimMax;
         for (const Inf* inf : todo)
             if (!_wcsicmp(DirOf(inf->path).c_str(), dir.c_str())) AddSlimRules(*inf, r);
         return r;
@@ -1732,7 +1812,11 @@ int wmain(int argc, wchar_t** argv)
         ULARGE_INTEGER avail = {};
         return !GetDiskFreeSpaceExW(where.c_str(), &avail, nullptr, nullptr) || avail.QuadPart >= need + (64ull << 20);
     };
-    std::map<wstring, wstring> slimDirs;    // package folder (upper case) -> its slim copy, empty if not slimmed
+    struct SlimCopyInfo {
+        wstring path;                       // the slim copy, empty if the package is loaded as it is
+        std::set<wstring> infs;             // the INFs the copy keeps (the others are left empty)
+    };
+    std::map<wstring, SlimCopyInfo> slimDirs;   // package folder (upper case) -> its slim copy
     unsigned slimCount = 0;
 
     for (int pass = 1; pass <= maxPasses && !g_abort; pass++) {
@@ -1869,13 +1953,19 @@ int wmain(int argc, wchar_t** argv)
             if (pe) {
                 wstring dir = DirOf(inf->path);
                 auto known = slimDirs.find(Upper(dir));
+                // Selected only in a later pass: the earlier slim copy left this INF empty.
+                if (known != slimDirs.end() && !known->second.path.empty()
+                    && !known->second.infs.count(Upper(NameOf(inf->path)))) {
+                    slimDirs.erase(known);
+                    known = slimDirs.end();
+                }
                 if (known == slimDirs.end()) {
                     wstring slim;
-                    ULONGLONG need = TreeSize(dir);
+                    SlimRules rules = slimRules(dir, todo);
+                    SlimStats measure, st;
+                    SlimCopy(dir, L"", L"", rules, false, measure);     // the package without child packages
+                    ULONGLONG need = measure.before;
                     if (forceSlim || !fits(need, runDir) || !fits(need, sysDir)) {
-                        SlimRules rules = slimRules(dir, todo);
-                        SlimStats measure, st;
-                        SlimCopy(dir, L"", L"", rules, false, measure);
                         if (measure.emptied) {
                             wchar_t sub[32];
                             swprintf(sub, 32, L"slim%u", ++slimCount);
@@ -1889,9 +1979,9 @@ int wmain(int argc, wchar_t** argv)
                             }
                         }
                     }
-                    known = slimDirs.insert({ Upper(dir), slim }).first;
+                    known = slimDirs.insert({ Upper(dir), { slim, rules.infs } }).first;
                 }
-                if (!known->second.empty()) infPath = Join(known->second, NameOf(inf->path));
+                if (!known->second.path.empty()) infPath = Join(known->second.path, NameOf(inf->path));
             }
 
             wstring error;
