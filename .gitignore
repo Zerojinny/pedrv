@@ -1,0 +1,8 @@
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
+
+# build output, bundled 7-Zip and test drivers
+/bin/
+
+# test driver packages (keep large driver files out of the project)
+/Display/

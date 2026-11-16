@@ -1,0 +1,41 @@
+[Main]
+Title=Display Driver Support
+Description=Sets GraphicsDrivers\ForceBddFallbackOnly. Some source images have it set to 1, which blocks every display driver except the Microsoft Basic Display Driver (Device Manager code 31). Set it to 0 to allow vendor display drivers to be loaded in PE.
+Author=pedrv
+Level=4
+Selected=True
+Mandatory=False
+Version=1.1.0.0
+Date=2026-11-14
+
+[Variables]
+%RegKey%="Tmp_System\ControlSet001\Control\GraphicsDrivers"
+%RegValue%="ForceBddFallbackOnly"
+
+[Process]
+Echo,"Processing %ScriptTitle%..."
+
+// From Windows 11 24H2 on, dwm.exe loads DDisplay.dll (through DispBroker.dll) as soon as a vendor
+// display driver starts. Without it DWM crashes in a loop, Windows falls back to the Basic Display
+// Driver and the adapter ends up with Device Manager code 43.
+RequireFileEx,AppendList,\Windows\System32\DDisplay.dll
+RequireFileEx,ExtractList
+
+RegLoadHives
+
+If,%cmb_ForceBddFallbackOnly%,Equal,"1 - Basic Display Driver only (Windows default)",RegWrite,HKLM,REG_DWORD,%RegKey%,%RegValue%,1
+Else,RegWrite,HKLM,REG_DWORD,%RegKey%,%RegValue%,0
+
+RegUnloadHives
+
+[SetDefaultOptions]
+System,Cursor,Wait
+WriteInterface,Value,%ScriptFile%,Interface,cmb_ForceBddFallbackOnly,"0 - Allow display drivers"
+System,Cursor,Normal
+
+[Interface]
+bvl_Options=Options,1,12,5,50,395,110,8,Bold
+lbl_ForceBddFallbackOnly="ForceBddFallbackOnly:",1,1,17,72,130,16,8,Normal
+cmb_ForceBddFallbackOnly="0 - Allow display drivers",1,4,150,68,240,21,"0 - Allow display drivers","1 - Basic Display Driver only (Windows default)"
+lbl_Info="0 = vendor display drivers can be loaded in PE (drvload, pedrv /pe).#$x1 = only the Microsoft Basic Display Driver is allowed.#$xThe value is read at boot, so it cannot be changed from the running PE.",1,1,17,100,375,50,8,Normal
+btn_SetDefaultOptions="Restore Defaults",1,8,410,56,120,25,SetDefaultOptions,0,True
