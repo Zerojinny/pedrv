@@ -62,6 +62,7 @@ DISM API로 오프라인 이미지에 드라이버를 추가합니다. `/image`�
 | `/hwonly` | 하드웨어 ID만 매칭 (호환 ID 무시) |
 | `/exclude:<클래스,...>` | 장치 클래스 제외 (예: `/exclude:Display,Media`) |
 | `/slim` | WinPE에 올릴 때 항상 축소 사본 사용 |
+| `/slim:max` | `/slim`에 더해 NVIDIA·AMD의 OpenGL·Vulkan 드라이버도 비움. `/export`에도 적용 |
 | `/export:<폴더>` | 설치하지 않고 축소 사본을 폴더에 저장. `/keep32`로 32비트 파일 유지 |
 | `/forceunsigned` | 서명 없는 드라이버 허용 (오프라인 설치) |
 | `/scratch:<폴더>` | 작업 폴더. 기본은 오프라인 설치면 대상 Windows 드라이브, `/pe`면 PE를 부팅한 드라이브(쓸 수 없으면 RAM 디스크의 `%TEMP%`) |
@@ -77,10 +78,12 @@ WIM의 이미지 번호는 `drivers.wim:2`처럼 지정합니다. 소스 폴더 
 
 NVIDIA 드라이버 패키지 하나가 약 2.7 GB입니다. WinPE에 올리면 RAM 디스크에 통째로 복사되므로 메모리가 적은 PC에서는 들어가지 않습니다.
 
-pedrv는 PE에서 화면을 띄우는 데 필요 없는 파일만 0바이트로 비운 **축소 사본**을 만들어 올립니다. 비우는 파일은 WSL/Linux용 파일, 32비트 파일, NVIDIA 패키지의 CUDA·OptiX·DLSS·비디오 코덱 등, AMD 패키지의 FidelityFX·AMF 런타임·설치 파일 등입니다. 이렇게 하면 NVIDIA 패키지가 약 750 MB, AMD 패키지(약 1.2 GB)가 약 490 MB가 됩니다. `.inf`, `.cat`, `.sys`는 그대로 둡니다.
+pedrv는 PE에서 화면을 띄우는 데 필요 없는 파일만 0바이트로 비운 **축소 사본**을 만들어 올립니다. 비우는 파일은 WSL/Linux용 파일, 32비트 파일, 다른 장치용 INF, NVIDIA 패키지의 CUDA·OptiX·DLSS·비디오 코덱 등, AMD 패키지의 FidelityFX·AMF 런타임·설치 파일 등입니다. 이렇게 하면 NVIDIA 패키지(약 2.7 GB)가 약 730~780 MB, AMD 패키지(약 1.2 GB)가 약 490 MB가 됩니다. 선택된 INF, `.cat`, `.sys`는 그대로 둡니다. 자체 INF가 있는 하위 폴더(Intel의 자식 드라이버 등)는 별도 패키지로 보고 사본에 넣지 않습니다.
 
 - 기본으로는 RAM 디스크에 들어가지 않는 패키지만 축소합니다. `/slim`을 붙이면 항상 축소합니다.
+- `/slim:max`는 OpenGL·Vulkan 드라이버까지 비웁니다 (AMD 약 330 MB). 그 PE에서는 OpenGL·Vulkan 프로그램이 동작하지 않습니다.
 - `/export:<폴더>`로 축소 사본을 미리 만들어 둘 수 있습니다.
+- 규칙별 파일 목록과 측정값은 [docs/slim-display-drivers.md](docs/slim-display-drivers.md)에 있습니다.
 
 > [!WARNING]
 > 축소 사본은 **부팅한 WinPE에서 올릴 때만** 동작합니다 (`pedrv /pe`, `drvload`).
@@ -137,7 +140,7 @@ x64 빌드 때 `C:\Program Files\7-Zip`이 있으면 `7z.exe`와 `7z.dll`도 함
 
 ## 더 자세한 설명
 
-옵션별 세부 동작, INF 선택 규칙, 작업 폴더와 RAM 디스크 사용량 등은 [CLAUDE.md](CLAUDE.md)에 정리되어 있습니다.
+옵션별 세부 동작, INF 선택 규칙, 작업 폴더와 RAM 디스크 사용량, 설계 결정의 근거는 [CLAUDE.md](CLAUDE.md)에 정리되어 있습니다. 조사 기록은 [docs/](docs/)에 있습니다.
 
 ## 라이선스
 

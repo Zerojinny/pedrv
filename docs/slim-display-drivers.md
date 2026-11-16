@@ -4,17 +4,20 @@
 
 측정한 패키지 (2026-11-16):
 
-| 패키지 | 원본 | 축소 (기본) | 축소 + `/keep32` |
-|---|---|---|---|
-| NVIDIA 610.88 (`Display.Driver`, INF 45개) | 2,747 MB, 265개 파일 | 793 MB (115개 비움) | - |
-| AMD 32.0.21045.16010 (RX 6600, `u0205305.inf`) | 1,171 MB, 136개 파일 | 491 MB (44개 비움) | 813 MB (7개 비움) |
+| 패키지 | 원본 | 1.1 규칙 | 1.2 규칙 | `/slim:max` | 축소 + `/keep32` |
+|---|---|---|---|---|---|
+| NVIDIA 610.88 (`Display.Driver`, INF 45개) | 2,747 MB, 265개 파일 | 793 MB (115개 비움) | 780 MB | 731 MB | - |
+| AMD 32.0.21045.16010 (RX 6600, `u0205305.inf`) | 1,171 MB, 136개 파일 | 491 MB (44개 비움) | 491 MB | 329 MB | 813 MB (7개 비움) |
+
+NVIDIA는 이 PC에 장치가 없어 `/all`로 측정했기 때문에, INF 45개가 모두 선택되어 "다른 장치용 INF" 규칙의 효과(약 52 MB)가 빠져 있습니다. 실제 장치에서는 약 730 MB(`/slim:max`면 약 680 MB)로 예상합니다.
 
 ## 축소 방식
 
 - 파일을 지우지 않고 **0바이트 빈 파일**로 바꿉니다. 패키지 구조와 INF·카탈로그는 그대로입니다. INF의 `CopyFiles`가 가리키는 파일이 빠지면 설치가 실패하므로, 파일은 남겨 두고 내용만 비웁니다.
 - 빈 파일은 카탈로그 해시와 맞지 않지만, 부팅한 WinPE는 이를 무시합니다. 그래서 축소 사본은 **부팅한 PE에서 올릴 때만** 동작하고, boot.wim에 미리 통합하면 동작하지 않습니다 (CLAUDE.md "드라이버 축소" 참고).
-- `.inf`, `.cat`, `.sys`는 어떤 규칙에도 걸리지 않습니다.
+- `.cat`, `.sys`, 선택된 INF는 어떤 규칙에도 걸리지 않습니다.
 - 규칙은 패키지 폴더 단위로 적용합니다. 그 폴더에서 선택된 INF의 제공자와 클래스로 NVIDIA·AMD 규칙을 켭니다.
+- 패키지는 INF 폴더에서, 자체 INF가 있는 하위 폴더를 뺀 범위입니다. 선택된 INF가 `CopyINF`·`SourceDisksNames`·`SourceDisksFiles`로 참조하는 하위 폴더는 남깁니다 (pedrv 1.2부터).
 
 ## 현재 규칙
 
@@ -24,6 +27,7 @@
 |---|---|---|
 | WSL/Linux용 | INF가 `lxss` 폴더로 복사하는 파일, `*.so`, `*.so.*` | PE에는 WSL이 없음 |
 | 32비트 실행 파일 | PE 헤더의 Machine이 i386 | WoW64가 있는 PE나 x86 대상, `/keep32`면 남김 |
+| 다른 장치용 INF | 선택된 INF도, 그 INF의 `CopyINF` 대상도 아닌 `.inf` | 1.2부터. NVIDIA 패키지는 INF 45개 중 보통 1개(+`nvppc.inf`)만 남음 |
 
 ### NVIDIA (제공자에 `NVIDIA`, 클래스 `Display`)
 
@@ -37,7 +41,8 @@
 | `NVOPENCL`, `OPENCL` | OpenCL |
 | `NVCUVID`, `NVENCODEAPI` | 비디오 디코드/인코드 API |
 | `NVDXDLKERNELS`, `NVTILEIRAS` | DirectML 커널 |
-| `NVDLPPX`, `NVDIRECTSR`, `NVNGX`, `NVAIVPX` | DLSS·NGX, AI 업스케일 |
+| `NVDLPPX`, `NVDIRECTSR`, `NVNGX`, `_NVNGX`, `NVAIVPX` | DLSS·NGX, AI 업스케일 (`_NVNGX`는 1.2부터) |
+| `NVVKSC` | Vulkan SC(안전 인증용) 드라이버 `nvvkscv64.dll` (1.2부터) |
 | `NVOBJECTLOADER` | |
 | `NVTELEMETRY`, `NVGAMES`, `NVIDIA-PCC` | 텔레메트리, 게임 설정 |
 
@@ -61,11 +66,22 @@
 
 이 규칙으로 축소한 RX 6600 패키지를 부팅한 PE에서 올려 정상 동작하는 것을 확인했습니다 (2026-11-16).
 
+### `/slim:max` (pedrv 1.2부터)
+
+기본 규칙에 더해 OpenGL·Vulkan 드라이버를 비웁니다. 그 PE에서는 OpenGL·Vulkan을 쓰는 프로그램이 동작하지 않습니다. Vulkan 로더(`vulkan-1.dll`)는 남기므로, 프로그램은 로더를 찾고 쓸 수 있는 드라이버가 없다고 판단합니다.
+
+| 제조사 | 접두어 | 크기 |
+|---|---|---|
+| NVIDIA | `NVOGLV`(OpenGL과 Vulkan을 함께 담은 `nvoglv64.dll`), `VULKANINFO` | 약 49 MB |
+| AMD | `AMDVLK`(Vulkan), `ATIO6AXX`·`ATIOGLXX`·`ATIG6PXX`·`ATIGLPXX`(OpenGL), `VULKANINFO` | 약 162 MB |
+
+PE에서의 동작은 아직 시험하지 않았습니다.
+
 **비우면 안 되는 파일**: D3D11 드라이버 `amdxx64.dll`은 D3D를 쓰는 모든 프로세스(explorer, 셸 호스트 등)에서 `amdenc64.dll`·`amdihk64.dll`을 함께 불러오고, `amdn1b64.dll`(19 MB)을 이름으로 참조합니다. `amdenc`는 이름이 인코더처럼 보여도 코덱 규칙에 넣으면 안 됩니다.
 
 ## 축소 후 남는 큰 파일
 
-### NVIDIA 610.88 (793 MB)
+### NVIDIA 610.88 (1.1 규칙 기준 793 MB)
 
 | 크기 | 파일 | 설명 |
 |---|---|---|
@@ -105,20 +121,19 @@
 
 | 후보 | 크기 | 위험도 | 근거와 영향 |
 |---|---|---|---|
-| 선택되지 않은 INF 44개 | 약 52 MB | 낮음 | drvload는 선택된 INF만 처리합니다. 비운 INF는 `pedrv /pe <폴더>`가 소스로 읽을 때 건너뜁니다. 규칙은 "선택된 INF 외의 `.inf`"로 만들어야 하므로 `SlimRules`에 선택된 INF 이름이 필요합니다 |
-| `nvvkscv64.dll` | 11.2 MB | 낮음 | Vulkan SC(안전 인증용) 드라이버. INF의 `VulkanSCDriverName` |
 | 캡처·관리 도구: `nvfbc64.dll`, `nvifr64.dll`, `nvml.dll`, `nvml_loader.dll`, `nvidia-smi.exe`, `nvencmfth264x.dll`, `nvencmfthevcx.dll`, `nvencmftav1x.dll`, `vulkaninfo-x64.exe` | 약 16 MB | 낮음 | 화면 캡처, 관리 도구, 인코더 MFT. 데스크톱 표시에는 쓰지 않음 |
-| AI 화면 기능: `nvaihdrx.dll`, `nvaidvcx.dll`, `_nvngx.dll` | 약 8 MB | 낮음 | RTX HDR, AI 색감 보정, NGX 런타임. 기존 `NVNGX` 접두어 규칙이 앞의 `_` 때문에 `_nvngx.dll`을 놓침 |
+| AI 화면 기능: `nvaihdrx.dll`, `nvaidvcx.dll` | 약 7 MB | 낮음 | RTX HDR, AI 색감 보정 |
 | 제어판·서버: `nvcpl.dll`, `NVCPL\*.appx`, `nvwss.dll`, `nvwssr.dll`, `nvdisps.dll`, `nvdispsr.dll`, `nvvitvs.dll`, `nvvitvsr.dll`, `nvsvs.dll`, `nvsvsr.dll`, `nvdevtools.dll`, `nvlicensings.dll`, `nvui.dll`, `nvuir.dll`, `nvxdapix.dll`, `nvxdplcy.dll`, `nvxdbat.dll` | 약 100 MB | 중간 | PE에서는 제어판을 쓰지 않습니다. 다만 `nvxd*`·`nvui`는 "User Experience Driver Component"로 컨테이너 서비스가 불러오며, 현재 규칙은 제어판을 일부러 남깁니다 |
 | 컨테이너 서비스: `Display.NvContainer\`, `NVWMI\`, `nvsvc64.dll`, `nvsvcr.dll` | 약 49 MB | 중간 | INF가 서비스로 등록하는 파일입니다. 비우면 서비스가 시작하지 못하는데, 이것이 drvload 결과나 장치 상태에 영향을 주는지 확인하지 않았습니다 |
 | 다른 세대의 GSP 펌웨어: `gsp_tu10x.bin` 또는 `gsp_ga10x.bin` | 28 / 80 MB | 높음 | GPU 세대마다 하나만 씁니다. 하지만 어느 GPU가 어느 파일을 쓰는지 확인하지 않았고, 하드웨어 ID로 고르는 로직이 필요합니다. 잘못 비우면 커널 드라이버가 시작하지 못합니다 (코드 43 예상) |
 | `nvd3dumx.dll` (D3D9) | 41.8 MB | 중간 | DWM은 D3D11을 씁니다. D3D9를 쓰는 PE 프로그램은 동작하지 않습니다 |
-| `nvoglv64.dll` (OpenGL·Vulkan) | 46.2 MB | 중간 | OpenGL과 Vulkan을 함께 담고 있어 둘 다 사라집니다 |
 | `nvpresent64.dll`, `nvppex.dll`, `nvcoproc.bin` | 8.0 / 7.2 / 12.1 MB | 미상 | 용도를 확인하지 못했습니다. 조사 전에는 비우지 않습니다 |
 
 계속 남겨야 하는 것: `nvlddmkm.sys`, `nvldumdx.dll`(`UserModeDriverName`의 로더), `nvwgf2umx.dll`, `nvgpucomp64.dll`, `nvd3d12scx.dll`, `nvdrsdb.bin`(프로필 데이터베이스), `nvapi64_impl.dll`.
 
-모두 적용하면(GSP·미상 제외) 약 793 → 510 MB, D3D9·OpenGL까지 비우면 약 420 MB로 추정합니다.
+선택되지 않은 INF, `nvvkscv64.dll`, `_nvngx.dll`은 1.2에서 기본 규칙으로, `nvoglv64.dll`은 `/slim:max`로 옮겼습니다.
+
+남은 후보를 모두 적용하면(GSP·미상 제외) 1.2 기준 약 730 → 560 MB, `/slim:max`에 D3D9까지 비우면 약 470 MB로 추정합니다.
 
 ### AMD
 
@@ -129,14 +144,14 @@
 | 비디오 디코드 데이터: `ativvaxy_*.dat` | 7.5 MB | 낮음~중간 | DXVA 디코드용으로 보이며 세대별로 나뉨. 용도를 확인하지는 않음 |
 | Radeon 소프트웨어 부품: `amdadlx64.dll`, `atiadlxx.dll`, `amdsasrv64.dll`, `amdsacli64.dll`, `GameManager64.dll`, `amdlvr64.dll`(VR), `amdmiracast.dll`, `amdgfxinfo64.dll`, `featuresync.dll`, `vulkaninfo64.exe` | 약 15 MB | 중간 | Radeon Software가 불러오는 것들(`RadeonSoftware` 프로세스에서 확인). `atiadlxx.dll`(ADL)은 다른 프로그램도 쓸 수 있음 |
 | 외부 이벤트 서비스: `atiesrxx.exe`, `atieclxx.exe`, `atieah64.exe`, `EEURestart.exe` | 약 2.6 MB | 중간 | INF가 `AMD External Events Utility` 서비스로 등록. 시작 실패의 영향은 확인하지 않음 |
-| Vulkan: `amdvlk64.dll`, `vulkan64.dll`(System32의 `vulkan-1.dll`) | 약 100 MB | 중간 | Vulkan 프로그램이 동작하지 않음. 가장 효과가 큼 |
-| OpenGL: `atio6axx.dll`, `atig6pxx.dll` | 약 61 MB | 중간 | OpenGL 프로그램이 동작하지 않음 (`steam` 프로세스가 불러옴) |
 | D3D9: `amdxn64.dll`, `atidx9loader64.dll` | 약 39 MB | 중간~높음 | DWM은 쓰지 않지만 D3D9 프로그램이 꽤 많음 (`parsecd`, `MSPCManager`, `RadeonSoftware`가 불러옴) |
 | D3D12: `amdxc64.dll` | 78.6 MB | 높음 | D3D12 프로그램과 WinUI 일부가 동작하지 않음. System32의 `amdxc64.dll`은 `amdxcstub64.dll` 사본이라 따로 판단해야 함 |
 
 계속 남겨야 하는 것: `amdkmdag.sys`, `amdxx64.dll`, `amdn1b64.dll`, `amdenc64.dll`, `amdihk64.dll`, `atidxxstub64.dll`(System32의 `atidxx64.dll`, 모든 D3D 프로세스가 불러옴), `amdicdxx.dat`·`atiicdxx.dat`, `atiapfxx.blb`.
 
-낮음 항목만 적용하면 약 491 → 475 MB로 효과가 작습니다. Vulkan·OpenGL까지 비우면 약 330 MB, D3D9까지 약 290 MB로 추정합니다.
+Vulkan·OpenGL은 1.2에서 `/slim:max`로 옮겼습니다 (329 MB).
+
+남은 후보 중 낮음 항목만 적용하면 약 491 → 475 MB로 효과가 작습니다. `/slim:max`에 D3D9까지 비우면 약 290 MB로 추정합니다.
 
 ## 후보를 적용하기 전에
 

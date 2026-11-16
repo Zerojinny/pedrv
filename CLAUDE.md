@@ -6,6 +6,13 @@ WinPE에서 실행하여 **현재 PC의 하드웨어에 맞는 드라이버만**
 - 런타임 의존성 없는 단일 exe (정적 CRT, .NET/PowerShell 불필요)
 - 콘솔 메시지는 영어입니다 (WinPE에는 보통 한글 글꼴이 없음)
 
+## 문서 구성
+
+- `README.md`: 사용자용 요약 (빠른 시작, 옵션 표, 주의 사항). 세부 동작은 이 문서로 링크합니다.
+- `CLAUDE.md` (이 문서): 전체 동작 설명, 설계 결정과 근거, 개발·배포 규칙.
+- `docs/`: 조사 기록과 긴 목록 (`pe-24h2-display-driver.md`, `slim-display-drivers.md`).
+- 동작이나 옵션을 바꾸면 이 문서를 먼저 고치고, 사용자에게 보이는 부분(옵션 표, 주의 사항, 대표 수치)은 README에도 반영합니다. 코드의 `Usage()` 도움말도 함께 맞춥니다.
+
 ## 사용법
 
 ```
@@ -23,6 +30,7 @@ pedrv [옵션] <소스> [<소스> ...]
 | `/hwonly` | 하드웨어 ID만 매칭 (호환 ID 무시) |
 | `/exclude:<클래스,...>` | 지정한 장치 클래스 제외 (예: `/exclude:Display,Media`). 기본은 제외 없음 |
 | `/slim` | WinPE에 올릴 때 항상 축소 사본을 사용. 지정하지 않으면 RAM 디스크에 들어가지 않는 패키지만 축소 (아래 "드라이버 축소" 참고) |
+| `/slim:max` | `/slim`에 더해 NVIDIA·AMD의 OpenGL·Vulkan 드라이버도 비움. `/export`에도 적용 (`/slim`은 `/export`에서 효과 없음) |
 | `/export:<폴더>` | 설치하지 않고, 선택된 드라이버 패키지의 축소 사본을 폴더에 저장. `/keep32`를 붙이면 32비트 파일을 남김. 부팅한 PE에서 올리는 용도이며, PE 이미지에 미리 통합하면 동작하지 않음 (아래 "드라이버 축소" 참고) |
 | `/forceunsigned` | 서명 없는 드라이버 허용 |
 | `/scratch:<폴더>` | 작업 폴더 (기본: `<image>\$PeDrv`, `/fromwin`은 그 Windows 드라이브의 `$PeDrv`, `/pe`는 PE를 부팅한 드라이브의 `\Temp\PeDrv`, 그 외 또는 쓸 수 없으면 `%TEMP%\PeDrv`. 종료 시 삭제) |
@@ -51,6 +59,7 @@ pedrv [옵션] <소스> [<소스> ...]
   - 바로가기는 `AddShortcut`으로 `cmd.exe /k "..."`를 만들어, 실행 결과를 볼 수 있게 창을 남깁니다.
   - `/fromwin` 바로가기를 따로 만들 수 있습니다(바탕 화면 / 시작 메뉴, 이름 따로, 시작 메뉴 폴더는 공통). 명령은 `pedrv.exe /fromwin [/inbox] <제외 클래스> <추가 옵션>`입니다. 디스크의 Windows는 pedrv가 찾고, 여러 개면 목록을 보여 주고 멈춥니다. 창이 남아 있으므로 `/fromwin:C:\`로 다시 실행하면 됩니다.
   - `pedrv.exe`는 스크립트에 인코딩되어 있습니다(`[EncodedFolders]`의 `pedrv` 폴더, x64 빌드). `ExtractFile,%ScriptFile%,pedrv,pedrv.exe,...`로 풀며, `%SourceArch%`가 x64가 아니면 외부 pedrv.exe를 고르라는 메시지와 함께 빌드를 멈춥니다. pedrv를 고치면 `build.cmd`로 다시 빌드하고, PEBakery에서 스크립트의 `pedrv.exe`를 다시 인코딩해야 합니다. 7-Zip은 `%Tools%\%SourceArch%`의 것을 씁니다.
+  - **버전 규칙**: 동작이 바뀌면 `src\pedrv.cpp`의 `PEDRV_VERSION`을 올립니다. PE 화면의 첫 줄(`pedrv 1.2 (built ...)`)로 어느 빌드인지 구분하기 위해서입니다. `pedrv.exe`를 다시 인코딩할 때는 스크립트 `[Main]`의 `Version=`을 `<pedrv 버전>.<스크립트 수정 번호>.0` 형식(예: pedrv 1.2를 넣은 첫 스크립트는 `1.2.0.0`)으로 함께 바꿉니다. 그러면 스크립트 버전만 보고도 들어 있는 pedrv를 알 수 있습니다. 인코딩하지 않은 동안에는 스크립트 버전을 바꾸지 않습니다.
   - PEBakery 명령은 쉼표로 인수를 나누므로 콤보 상자 값에 쉼표를 쓰지 않습니다.
 
 ```
@@ -137,10 +146,23 @@ pedrv /fromwin /list
 |---|---|
 | WSL/Linux용 | 모든 패키지. INF가 `lxss` 폴더로 복사하는 파일과 `*.so` |
 | 32비트 실행 파일 | 모든 패키지. 파일 헤더로 판별. WoW64가 있는 PE나 x86 대상에서는 남김 |
-| CUDA, OptiX, NVVM, OpenCL, 비디오 코덱, DirectML, NGX/DLSS, NvCamera, 텔레메트리 | NVIDIA 디스플레이 패키지만 |
+| 다른 장치용 INF | 모든 패키지. 선택된 INF와 그 INF가 `CopyINF`로 지정한 INF(NVIDIA `nvppc.inf`, AMD `.\amdxe\amdxe.inf` 등)만 남김. NVIDIA 패키지에는 INF가 45개(약 52 MB) 있음 |
+| CUDA, OptiX, NVVM, OpenCL, 비디오 코덱, DirectML, NGX/DLSS(`_nvngx.dll` 포함), Vulkan SC, NvCamera, 텔레메트리 | NVIDIA 디스플레이 패키지만 |
 | FidelityFX 라이브러리(`amdxcffx*`), 대체 Vulkan 드라이버(`amdvlk_nexus.cab`), AMF 비디오 런타임(`amfrtdrv*`), 소프트웨어 설치 파일(`AMDInstallManager.msi`) | AMD 디스플레이 패키지만 |
+| OpenGL·Vulkan 드라이버 (NVIDIA `nvoglv*`, AMD `amdvlk*`·`atio6axx`·`atioglxx`·`atig6pxx`·`atiglpxx`), `vulkaninfo*` | `/slim:max`일 때만. Vulkan 로더(`vulkan-1.dll`)는 남김 |
 
-`.inf`, `.cat`, `.sys`는 항상 남깁니다. NVIDIA 패키지는 2,718 MB가 약 750 MB가 됩니다 (드라이버 32.0.16.1742 기준). AMD 패키지는 1,171 MB가 491 MB가 됩니다 (드라이버 32.0.21045.16010, RX 6600 기준. `/keep32`면 813 MB).
+선택된 INF, `.cat`, `.sys`는 항상 남깁니다.
+
+**패키지 범위**: 축소 사본과 공간 계산은 INF가 있는 폴더를 대상으로 하되, 자체 INF가 들어 있는 하위 폴더는 다른 패키지로 보고 뺍니다 (Intel 그래픽 패키지의 `CtaChildDriver`, `DisplayAudio` 등). 선택된 INF가 `CopyINF`, `SourceDisksNames`, `SourceDisksFiles`로 참조하는 하위 폴더는 남깁니다. 예전에는 INF 폴더 아래를 전부 복사해서, 소스 최상위에 INF가 있으면 그 아래 드라이버를 모두 복사했습니다. `/pe`에서 나중 패스에 같은 폴더의 다른 INF가 선택되면, 앞서 만든 사본에서는 그 INF가 비어 있으므로 사본을 새로 만듭니다.
+
+측정값 (2026-11-16, pedrv 1.2):
+
+| 패키지 | 원본 | 축소 | `/slim:max` |
+|---|---|---|---|
+| NVIDIA 610.88 (`/all`로 INF 45개 모두 선택, INF 정리 효과 없음) | 2,746 MB | 780 MB | 731 MB |
+| AMD 32.0.21045.16010 (RX 6600) | 1,171 MB | 491 MB (`/keep32`면 813 MB) | 329 MB |
+
+예전 측정: NVIDIA 32.0.16.1742는 2,718 MB가 약 750 MB가 되었습니다.
 
 AMD 규칙은 일반 Windows에서 프로세스들이 실제로 불러오는 DLL을 보고 정했습니다 (2026-11-16). D3D11 드라이버(`amdxx64.dll`)는 프로세스마다 `amdenc64.dll`·`amdihk64.dll`을 함께 불러오고 `amdn1b64.dll`을 참조하므로, 이 파일들은 이름과 달리 비우면 안 됩니다. D3D9/11/12·OpenGL·Vulkan 드라이버와 `.dat` 펌웨어도 남깁니다. 축소한 AMD 패키지(RX 6600)를 부팅한 PE에서 올려 정상 동작하는 것을 확인했습니다 (2026-11-16). 규칙별 파일 목록과, 더 비울 수 있는 후보 파일은 [docs/slim-display-drivers.md](docs/slim-display-drivers.md)에 정리했습니다.
 
