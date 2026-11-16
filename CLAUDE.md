@@ -58,6 +58,7 @@ pedrv [옵션] <소스> [<소스> ...]
   - "외부 pedrv.exe 사용"을 선택하면 지정한 파일을 `pedrv.exe`로 복사하고, 아키텍처 확인은 하지 않습니다. 새 빌드를 다시 인코딩하지 않고 쓰거나, x86·arm64 PE에 쓸 때 사용합니다.
   - 바로가기는 `AddShortcut`으로 `cmd.exe /k "..."`를 만들어, 실행 결과를 볼 수 있게 창을 남깁니다.
   - `/fromwin` 바로가기를 따로 만들 수 있습니다(바탕 화면 / 시작 메뉴, 이름 따로, 시작 메뉴 폴더는 공통). 명령은 `pedrv.exe /fromwin [/inbox] <제외 클래스> <추가 옵션>`입니다. 디스크의 Windows는 pedrv가 찾고, 여러 개면 목록을 보여 주고 멈춥니다. 창이 남아 있으므로 `/fromwin:C:\`로 다시 실행하면 됩니다.
+  - 일반 바로가기와 `/fromwin` 바로가기에 각각 **디스플레이 제외** 바로가기를 추가할 수 있습니다("Also a shortcut without display drivers", 이름 따로). 같은 위치(바탕 화면 / 시작 메뉴 선택을 따름)에 만들어지며, 제외 클래스 목록에 `Display`를 더한 명령입니다 (`/exclude:Media;Display`처럼). 디스플레이 드라이버 때문에 화면이 멈추거나, 그래픽 드라이버는 이미 올렸고 나머지만 올리고 싶을 때 씁니다. 위의 제외 클래스에서 Display를 이미 골랐으면 같은 바로가기가 되므로 만들지 않고 로그에만 남깁니다.
   - `pedrv.exe`는 스크립트에 인코딩되어 있습니다(`[EncodedFolders]`의 `pedrv` 폴더, x64 빌드). `ExtractFile,%ScriptFile%,pedrv,pedrv.exe,...`로 풀며, `%SourceArch%`가 x64가 아니면 외부 pedrv.exe를 고르라는 메시지와 함께 빌드를 멈춥니다. pedrv를 고치면 `build.cmd`로 다시 빌드하고, PEBakery에서 스크립트의 `pedrv.exe`를 다시 인코딩해야 합니다. 7-Zip은 `%Tools%\%SourceArch%`의 것을 씁니다.
   - **버전 규칙**: 동작이 바뀌면 `src\pedrv.cpp`의 `PEDRV_VERSION`을 올립니다. PE 화면의 첫 줄(`pedrv 1.2 (built ...)`)로 어느 빌드인지 구분하기 위해서입니다. `pedrv.exe`를 다시 인코딩할 때는 스크립트 `[Main]`의 `Version=`을 `<pedrv 버전>.<스크립트 수정 번호>.0` 형식(예: pedrv 1.2를 넣은 첫 스크립트는 `1.2.0.0`)으로 함께 바꿉니다. 그러면 스크립트 버전만 보고도 들어 있는 pedrv를 알 수 있습니다. 인코딩하지 않은 동안에는 스크립트 버전을 바꾸지 않습니다.
   - PEBakery 명령은 쉼표로 인수를 나누므로 콤보 상자 값에 쉼표를 쓰지 않습니다.
