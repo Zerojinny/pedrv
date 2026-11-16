@@ -10,6 +10,10 @@
 - 수 GB짜리 그래픽 드라이버를 WinPE의 RAM 디스크에 들어가도록 축소
 - 콘솔 메시지는 영어 (WinPE에는 보통 한글 글꼴이 없음)
 
+## 다운로드
+
+[Releases](https://github.com/Zerojinny/pedrv/releases)에서 PE의 아키텍처에 맞는 파일을 받아 `pedrv.exe`로 이름을 바꿔 쓰세요 (`pedrv-x64.exe`, `pedrv-x86.exe`). `.zip`·`.7z` 소스를 쓰려면 7-Zip(`7z.exe`, `7z.dll`)을 같은 폴더에 두세요 (아래 "요구 사항" 참고).
+
 ## 빠른 시작
 
 ```bat
