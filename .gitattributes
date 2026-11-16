@@ -1,0 +1,2 @@
+# Keep every file byte-exact (LF sources, CRLF scripts, PEBakery encoded data): no line-ending conversion.
+* -text
