@@ -12,7 +12,7 @@
 
 ## 다운로드
 
-[Releases](https://github.com/Zerojinny/pedrv/releases)에서 PE의 아키텍처에 맞는 파일을 받아 `pedrv.exe`로 이름을 바꿔 쓰세요 (`pedrv-x64.exe`, `pedrv-x86.exe`). `.zip`·`.7z` 소스를 쓰려면 7-Zip(`7z.exe`, `7z.dll`)을 같은 폴더에 두세요 (아래 "요구 사항" 참고).
+[Releases](https://github.com/Zerojinny/pedrv/releases)에서 PE의 아키텍처에 맞는 파일을 받아 `pedrv.exe`로 이름을 바꿔 쓰세요 (`pedrv-x64.exe`, `pedrv-x86.exe`, `pedrv-arm64.exe`). `.zip`·`.7z` 소스를 쓰려면 7-Zip(`7z.exe`, `7z.dll`)을 같은 폴더에 두세요 (아래 "요구 사항" 참고).
 
 ## 빠른 시작
 
